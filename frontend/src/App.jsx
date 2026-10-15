@@ -9,10 +9,25 @@ const TABS = [
   { id: 'questions', label: '待确认', mark: '05' },
 ]
 
-const EXAMPLES = [
-  '做一个游戏内玩家反馈入口，玩家提交问题后可以查看处理进度',
-  '给小型团队做一个简单的任务看板，支持分配负责人和截止日期',
-  '用户可以收藏内容，并能在个人中心取消收藏和查看列表',
+const TEMPLATES = [
+  {
+    title: '游戏反馈入口',
+    description: '让玩家提交问题，并追踪处理进度。',
+    prompt: '做一个游戏内玩家反馈入口，玩家提交问题后可以查看处理进度',
+    icon: 'grid',
+  },
+  {
+    title: '团队任务看板',
+    description: '分配负责人、设置截止日期并跟进状态。',
+    prompt: '给小型团队做一个简单的任务看板，支持分配负责人和截止日期',
+    icon: 'list',
+  },
+  {
+    title: '内容收藏功能',
+    description: '收藏内容，并在个人中心查看或取消收藏。',
+    prompt: '用户可以收藏内容，并能在个人中心取消收藏和查看列表',
+    icon: 'book',
+  },
 ]
 
 const SAMPLE = {
@@ -199,7 +214,7 @@ function App() {
   }
 
   function loadSample() {
-    setRequirement(EXAMPLES[0])
+    setRequirement(TEMPLATES[0].prompt)
     setResult(SAMPLE)
     setActiveSpecId(null)
     setActiveTab('summary')
@@ -283,29 +298,24 @@ function App() {
 
       {view === 'workbench' && <div className="workbench-content">
         <section className="welcome-row">
-          <div>
-            <div className="eyebrow"><span className="eyebrow-line" /> 从想法开始</div>
-            <h1>把模糊想法，变成<br /><span>可讨论、可验证</span>的需求。</h1>
-            <p className="welcome-copy">先把你脑中的想法写下来。SpecPilot 会帮你梳理缺失信息、验收标准和测试方向。</p>
-          </div>
-          <div className="welcome-illustration" aria-hidden="true">
-            <div className="orbit orbit-one" /><div className="orbit orbit-two" />
-            <div className="float-card float-card-back"><span className="mini-line" /><span className="mini-line short" /><span className="mini-check">✓</span></div>
-            <div className="float-card float-card-front"><div className="float-icon"><Icon name="spark" size={17} /></div><span>需求已成形</span><div className="float-progress"><i /></div></div>
-            <div className="sparkle s-one">✳</div><div className="sparkle s-two">✦</div>
+          <div className="welcome-content">
+            <div className="eyebrow"><span className="eyebrow-line" /> AI 需求工作台</div>
+            <h1><span className="headline-first">你想把什么想法，</span><span>变成产品？</span></h1>
+            <p className="welcome-copy">写下场景和目标，SpecPilot 帮你整理成可讨论、可验证的需求草案。</p>
           </div>
         </section>
 
         <section className="composer-card">
-          <div className="composer-topline"><div className="composer-label"><span className="composer-icon"><Icon name="spark" size={16} /></span><strong>描述你的想法</strong><span className="subtle">从一句话开始，之后还可以修改</span></div><span className="character-count">{requirement.length} / 5000</span></div>
           <label className="sr-only" htmlFor="requirement-input">需求描述</label>
-          <textarea id="requirement-input" maxLength={5000} value={requirement} onChange={(event) => setRequirement(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') createSpec() }} placeholder="例如：我想让游戏玩家能提交反馈，并且在后台查看处理状态……" />
-          <div className="composer-footer"><div className="input-hint"><span className="kbd">⌘</span><span>+ Enter 生成需求草案</span></div><button className="generate-button" onClick={() => createSpec()} disabled={loading}><span>{loading ? '正在整理需求…' : '整理成需求草案'}</span><Icon name={loading ? 'clock' : 'arrow'} size={16} /></button></div>
+          <textarea id="requirement-input" maxLength={5000} value={requirement} onChange={(event) => setRequirement(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') createSpec() }} placeholder="描述你的产品想法、目标用户和希望解决的问题……" />
+          <div className="composer-footer">
+            <div className="composer-tools"><span className="composer-mode"><Icon name="spark" size={15} />需求拆解</span><span className="input-hint"><span className="kbd">⌘</span><span>+ Enter 生成</span></span></div>
+            <div className="composer-submit"><span className="character-count">{requirement.length} / 5000</span><button className="generate-button" onClick={() => createSpec()} disabled={loading}><span>{loading ? '正在整理需求…' : '生成需求草案'}</span><Icon name={loading ? 'clock' : 'arrow'} size={16} /></button></div>
+          </div>
           {error && <div className="inline-error" role="alert">{error}</div>}
-          <div className="example-row"><span>试试这些</span>{EXAMPLES.map((example, index) => <button key={example} onClick={() => setRequirement(example)}>{['游戏反馈入口', '团队任务看板', '收藏功能'][index]} <Icon name="arrow" size={12} /></button>)}</div>
         </section>
 
-        <div className="below-composer"><span>不想等待服务端？</span><button onClick={loadSample}>打开演示样例 <Icon name="chevron" size={14} /></button><span className="divider-dot">·</span><span>无需 API Key 即可预览界面</span></div>
+        <div className="below-composer"><span>先看看完整输出？</span><button onClick={loadSample}>打开演示样例 <Icon name="chevron" size={14} /></button><span className="divider-dot">·</span><span>无需 API Key</span></div>
 
         {result && <section className="result-card" aria-live="polite">
           <div className="result-header">
@@ -331,7 +341,14 @@ function App() {
           <div className="result-footer"><span><span className="status-dot draft" />草案可继续编辑</span><span>生成内容需由开发者检查与测试</span></div>
         </section>}
 
-        {!result && <section className="workflow-strip"><div className="workflow-intro"><div className="workflow-chip">简单三步</div><h3>从一句话，到下一步行动</h3><p>先理清问题，再落到可验证的实现。</p></div><div className="step-line"><div className="workflow-step"><span>01</span><div><strong>说清楚想法</strong><small>输入场景与目标</small></div></div><i /><div className="workflow-step"><span>02</span><div><strong>补齐关键信息</strong><small>找出未知和风险</small></div></div><i /><div className="workflow-step"><span>03</span><div><strong>交给人来确认</strong><small>编辑后再进入开发</small></div></div></div></section>}
+        {!result && <section className="template-section">
+          <div className="template-heading"><div><span className="template-eyebrow">从场景开始</span><h2>常见需求起点</h2></div><span>选择一个示例，再按你的实际情况修改</span></div>
+          <div className="template-grid">{TEMPLATES.map((template) => <button className="template-card" key={template.title} onClick={() => { setRequirement(template.prompt); document.getElementById('requirement-input')?.focus() }}>
+            <span className="template-icon"><Icon name={template.icon} size={18} /></span><span className="template-arrow"><Icon name="arrow" size={15} /></span>
+            <strong>{template.title}</strong><span className="template-description">{template.description}</span><span className="template-action">填入示例需求</span>
+          </button>)}</div>
+          <div className="workflow-strip"><div className="workflow-intro"><div className="workflow-chip">人工确认优先</div><h3>AI 整理，人来把关</h3><p>每一项输出都可以编辑、复核和测试。</p></div><div className="step-line"><div className="workflow-step"><span>01</span><div><strong>描述场景</strong><small>输入目标与背景</small></div></div><i /><div className="workflow-step"><span>02</span><div><strong>检查草案</strong><small>确认未知与风险</small></div></div><i /><div className="workflow-step"><span>03</span><div><strong>验证实现</strong><small>测试后再交付</small></div></div></div></div>
+        </section>}
       </div>}
 
       {view === 'library' && <div className="library-content">
