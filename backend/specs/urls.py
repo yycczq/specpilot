@@ -1,6 +1,6 @@
 from django.urls import path
 
-from .views import HealthView, OverviewView, SpecDetailView, SpecListCreateView, SpecRevisionListView
+from .views import HealthView, OverviewView, ProviderTestView, SpecDetailView, SpecListCreateView, SpecRevisionListView
 
 
 urlpatterns = [
@@ -9,4 +9,5 @@ urlpatterns = [
     path("specs/", SpecListCreateView.as_view(), name="spec-list-create"),
     path("specs/<uuid:spec_id>/", SpecDetailView.as_view(), name="spec-detail"),
     path("specs/<uuid:spec_id>/revisions/", SpecRevisionListView.as_view(), name="spec-revisions"),
+    path("providers/test/", ProviderTestView.as_view(), name="provider-test"),
 ]

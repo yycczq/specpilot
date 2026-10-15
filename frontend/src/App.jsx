@@ -87,14 +87,38 @@ function toMarkdown(result) {
 }
 
 function SectionList({ items = [], editable, onChange, numbered = false }) {
-  if (!items.length) return <div className="empty-note">还没有内容。确认需求后可以补充。</div>
+  if (!items.length && !editable) return <div className="empty-note">还没有内容。确认需求后可以补充。</div>
   return <div className="section-list">{items.map((item, index) => {
     const text = typeof item === 'string' ? item : item.name || item.path || JSON.stringify(item)
     return <div className="section-row" key={`${index}-${text}`}>
       <span className={numbered ? 'row-number' : 'row-dot'}>{numbered ? String(index + 1).padStart(2, '0') : ''}</span>
       {editable ? <textarea rows="2" value={text} onChange={(event) => onChange(index, event.target.value)} /> : <span>{text}</span>}
+      {editable && <button type="button" className="list-remove" onClick={() => onChange(index, null)} aria-label={`删除第 ${index + 1} 项`}>×</button>}
     </div>
-  })}</div>
+  })}{editable && <button type="button" className="list-add" onClick={() => onChange(items.length, '')}>＋ 添加一项</button>}</div>
+}
+
+function StructuredList({ items = [], fields, editable, onChange }) {
+  if (!items.length && !editable) return <div className="empty-note">还没有内容。</div>
+  return <div className="structured-list">{items.map((item, index) => <article className="structured-item" key={`${index}-${item[fields[0].key] || 'new'}`}>
+    {fields.map((field) => <label className={`structured-field ${field.multiline ? 'multiline' : ''}`} key={field.key}>
+      {editable && <span>{field.label}</span>}
+      {editable ? field.multiline
+        ? <textarea rows="2" value={item[field.key] || ''} onChange={(event) => onChange(index, { ...item, [field.key]: event.target.value })} />
+        : <input value={item[field.key] || ''} onChange={(event) => onChange(index, { ...item, [field.key]: event.target.value })} />
+        : <span className="structured-readonly">{item[field.key]}</span>}
+    </label>)}
+    {editable && <button type="button" className="list-remove" onClick={() => onChange(index, null)} aria-label={`删除第 ${index + 1} 项`}>×</button>}
+  </article>)}{editable && <button type="button" className="list-add" onClick={() => onChange(items.length, Object.fromEntries(fields.map((field) => [field.key, ''])))}>＋ 添加一项</button>}</div>
+}
+
+function storedProviderPreferences() {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem('specpilot-provider-preferences') || '{}')
+    return { base_url: saved.base_url || 'https://api.openai.com/v1', model: saved.model || '', api_key: '' }
+  } catch {
+    return { base_url: 'https://api.openai.com/v1', model: '', api_key: '' }
+  }
 }
 
 function App() {
@@ -112,6 +136,15 @@ function App() {
   const [query, setQuery] = useState('')
   const [toast, setToast] = useState('')
   const [apiInfo, setApiInfo] = useState(null)
+  const [providerSettings, setProviderSettings] = useState(storedProviderPreferences)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [apiTesting, setApiTesting] = useState(false)
+  const [apiError, setApiError] = useState('')
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyItems, setHistoryItems] = useState([])
+  const [editingSnapshot, setEditingSnapshot] = useState(null)
+  const [apiDocsOpen, setApiDocsOpen] = useState(false)
 
   const filteredSpecs = useMemo(() => {
     const value = query.trim().toLowerCase()
@@ -133,6 +166,19 @@ function App() {
 
   useEffect(() => { loadSpecs() }, [])
   useEffect(() => {
+    if (view !== 'library') return undefined
+    const controller = new AbortController()
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await fetch(`${API}/specs/?q=${encodeURIComponent(query.trim())}`, { signal: controller.signal })
+        if (response.ok) setSpecs(await response.json())
+      } catch (err) {
+        if (err.name !== 'AbortError') setToast('搜索暂时不可用，请检查服务端连接。')
+      }
+    }, 220)
+    return () => { window.clearTimeout(timer); controller.abort() }
+  }, [query, view])
+  useEffect(() => {
     if (!toast) return undefined
     const timer = window.setTimeout(() => setToast(''), 2600)
     return () => window.clearTimeout(timer)
@@ -151,7 +197,7 @@ function App() {
       const response = await fetch(`${API}/specs/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requirement: text.trim() }),
+        body: JSON.stringify({ requirement: text.trim(), ...(providerSettings.api_key ? { provider: providerSettings } : {}) }),
       })
       const payload = await response.json()
       if (!response.ok) throw new Error(payload.detail || '生成失败，请稍后重试。')
@@ -159,6 +205,8 @@ function App() {
       setResult(payload.result)
       setActiveSpecId(payload.id)
       setActiveTab('summary')
+      setIsEditing(false)
+      setEditingSnapshot(null)
       await loadSpecs()
       setToast(payload.result.mode === 'mock' ? '已生成演示草案' : 'AI 草案已生成，请人工审阅')
     } catch (err) {
@@ -180,6 +228,7 @@ function App() {
       setActiveSpecId(payload.id)
       setActiveTab('summary')
       setIsEditing(false)
+      setEditingSnapshot(null)
     } catch {
       setToast('暂时无法读取这条需求，请确认服务端正在运行。')
     }
@@ -189,6 +238,7 @@ function App() {
     if (!result) return
     if (!activeSpecId) {
       setIsEditing(false)
+      setEditingSnapshot(null)
       setToast('演示样例的修改仅在本次预览中保留')
       return
     }
@@ -204,6 +254,7 @@ function App() {
       if (!response.ok) throw new Error(payload.detail || '保存失败。')
       setResult(payload.result)
       setIsEditing(false)
+      setEditingSnapshot(null)
       await loadSpecs()
       setToast('已保存人工审阅版本')
     } catch (err) {
@@ -219,12 +270,91 @@ function App() {
     setActiveSpecId(null)
     setActiveTab('summary')
     setIsEditing(false)
+    setEditingSnapshot(null)
     setError('')
     setToast('这是用于预览界面的本地演示数据')
   }
 
   function updateList(key, index, value) {
-    setResult((current) => ({ ...current, [key]: current[key].map((item, itemIndex) => itemIndex === index ? value : item) }))
+    setResult((current) => {
+      const items = [...(current[key] || [])]
+      if (value === null) items.splice(index, 1)
+      else if (index === items.length) items.push(value)
+      else items[index] = value
+      return { ...current, [key]: items }
+    })
+  }
+
+  function beginEditing() {
+    setEditingSnapshot(structuredClone(result))
+    setIsEditing(true)
+  }
+
+  function cancelEditing() {
+    if (editingSnapshot) setResult(editingSnapshot)
+    setEditingSnapshot(null)
+    setIsEditing(false)
+  }
+
+  async function testProvider() {
+    setApiError('')
+    setApiTesting(true)
+    try {
+      const response = await fetch(`${API}/providers/test/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: providerSettings }),
+      })
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.detail || '连接失败，请检查 API 设置。')
+      setToast('API 连接成功')
+    } catch (err) {
+      setApiError(err.message === 'Failed to fetch' ? '连接不到 SpecPilot 服务端。' : err.message)
+    } finally {
+      setApiTesting(false)
+    }
+  }
+
+  function saveProviderSettings() {
+    try {
+      window.localStorage.setItem('specpilot-provider-preferences', JSON.stringify({ base_url: providerSettings.base_url.trim(), model: providerSettings.model.trim() }))
+    } catch {
+      // Preferences still work in memory when browser storage is unavailable.
+    }
+    setSettingsOpen(false)
+    setApiError('')
+    setToast(providerSettings.api_key ? 'API 设置已保存，密钥只保留在当前页面内存中' : 'API 地址和模型已保存；填入密钥后即可调用')
+  }
+
+  function clearProviderKey() {
+    setProviderSettings((current) => ({ ...current, api_key: '' }))
+    setApiError('')
+    setToast('已从当前页面清除 API Key')
+  }
+
+  async function openHistory() {
+    if (!activeSpecId) return
+    setHistoryOpen(true)
+    setHistoryLoading(true)
+    try {
+      const response = await fetch(`${API}/specs/${activeSpecId}/revisions/`)
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.detail || '无法读取修改历史。')
+      setHistoryItems(payload)
+    } catch (err) {
+      setToast(err.message === 'Failed to fetch' ? '暂时无法连接服务端。' : err.message)
+      setHistoryOpen(false)
+    } finally {
+      setHistoryLoading(false)
+    }
+  }
+
+  function loadRevision(revision) {
+    setEditingSnapshot(structuredClone(result))
+    setResult(revision.result)
+    setIsEditing(true)
+    setHistoryOpen(false)
+    setToast('已载入历史版本；保存后会生成新的修订记录')
   }
 
   async function copyMarkdown() {
@@ -286,14 +416,14 @@ function App() {
           <span className="mode-indicator" />
           <div><strong>人工审阅优先</strong><span>AI 给草案，你来做决定</span></div>
         </div>
-        <div className="profile-row"><div className="profile-avatar">子</div><div className="profile-info"><strong>我的工作区</strong><span>本地体验模式</span></div><button className="dots-button" aria-label="更多选项">···</button></div>
+        <div className="profile-row"><div className="profile-avatar">子</div><div className="profile-info"><strong>我的工作区</strong><span>本地体验模式</span></div><button className="dots-button" onClick={() => setSettingsOpen(true)} aria-label="API 设置">···</button></div>
       </div>
     </aside>
 
     <main className="main-area">
       <header className="topbar">
         <div className="breadcrumb"><span>SpecPilot</span><Icon name="chevron" size={14} /><strong>{title}</strong></div>
-        <div className="topbar-actions"><span className="connection-status"><span className={apiInfo ? 'connected' : ''} /> {apiInfo ? (apiInfo.ai_provider === 'mock' ? 'API · 本地演示' : `API · ${apiInfo.ai_provider}`) : 'API · 离线预览'}</span><button className="help-button" onClick={() => setView('workflow')}>使用指南 <Icon name="arrow" size={14} /></button><div className="top-avatar">子</div></div>
+        <div className="topbar-actions"><button className="connection-status" onClick={() => setSettingsOpen(true)} title="配置你自己的 OpenAI 兼容 API" aria-label="配置 AI API"><span className={`connection-indicator ${providerSettings.api_key || apiInfo ? 'connected' : ''}`} /><span className="connection-label">{providerSettings.api_key ? `BYOK · ${providerSettings.model || '已配置'}` : apiInfo ? (apiInfo.ai_provider === 'mock' ? 'API · 本地演示' : `API · ${apiInfo.ai_provider}`) : '配置 API'}</span></button><button className="help-button api-settings-button" onClick={() => setSettingsOpen(true)}>API 设置</button><button className="help-button guide-button" onClick={() => setView('workflow')}>使用指南 <Icon name="arrow" size={14} /></button><div className="top-avatar">子</div></div>
       </header>
 
       {view === 'workbench' && <div className="workbench-content">
@@ -320,7 +450,7 @@ function App() {
         {result && <section className="result-card" aria-live="polite">
           <div className="result-header">
             <div className="result-heading"><div className="result-icon"><Icon name="check" size={17} /></div><div><div className="result-kicker">{result.mode === 'sample' ? 'SAMPLE PREVIEW' : result.mode === 'mock' ? 'LOCAL MOCK' : 'AI DRAFT'} <span className="draft-pill">待人工确认</span></div><h2>{isEditing ? <input className="title-edit" value={result.title} onChange={(event) => setResult({ ...result, title: event.target.value })} /> : result.title}</h2></div></div>
-            <div className="result-actions">{isEditing ? <><button className="secondary-button" onClick={() => setIsEditing(false)}>取消</button><button className="primary-small" onClick={saveReview} disabled={saving}>{saving ? '保存中…' : activeSpecId ? '确认并保存' : '完成预览编辑'}</button></> : <><button className="secondary-button" onClick={copyMarkdown}><Icon name="copy" size={15} />复制</button><button className="secondary-button" onClick={downloadMarkdown}><Icon name="download" size={15} />导出</button><button className="primary-small" onClick={() => setIsEditing(true)}>人工审阅</button></>}</div>
+            <div className="result-actions">{isEditing ? <><button className="secondary-button" onClick={cancelEditing}>取消</button><button className="primary-small" onClick={saveReview} disabled={saving}>{saving ? '保存中…' : activeSpecId ? '确认并保存' : '完成预览编辑'}</button></> : <>{activeSpecId && <button className="secondary-button" onClick={openHistory}>修订历史</button>}<button className="secondary-button" onClick={copyMarkdown}><Icon name="copy" size={15} />复制</button><button className="secondary-button" onClick={downloadMarkdown}><Icon name="download" size={15} />导出</button><button className="primary-small" onClick={beginEditing}>人工审阅</button></>}</div>
           </div>
           <div className="result-body">
             <nav className="result-tabs" aria-label="需求草案内容">{TABS.map((tab) => <button key={tab.id} className={activeTab === tab.id ? 'active' : ''} onClick={() => setActiveTab(tab.id)}><span>{tab.mark}</span>{tab.label}{tab.id === 'questions' && result.questions?.length > 0 && <i>{result.questions.length}</i>}</button>)}</nav>
@@ -333,8 +463,8 @@ function App() {
                 <div className="ai-note"><Icon name="spark" size={15} /><span>AI 输出是初稿。角色、权限和业务规则请结合实际场景确认。</span></div>
               </>}
               {activeTab === 'criteria' && <><div className="content-eyebrow">验收标准 <span className="count-label">{result.acceptance_criteria?.length || 0} 项</span></div><SectionList items={result.acceptance_criteria} numbered editable={isEditing} onChange={(index, value) => updateList('acceptance_criteria', index, value)} /></>}
-              {activeTab === 'api' && <><div className="content-eyebrow">接口草案 <span className="count-label">待开发评审</span></div><div className="api-list">{(result.api_endpoints || []).map((endpoint, index) => <div className="api-row" key={`${endpoint.path}-${index}`}><span className={`method-tag ${endpoint.method.toLowerCase()}`}>{endpoint.method}</span><code>{endpoint.path}</code><span className="api-purpose">{endpoint.purpose}</span></div>)}</div><div className="api-caveat">接口字段、鉴权方式和错误码需要和实际服务端设计保持一致。</div></>}
-              {activeTab === 'tests' && <><div className="content-eyebrow">测试用例 <span className="count-label">建议覆盖边界情况</span></div><div className="test-list">{(result.test_cases || []).map((test, index) => <div className="test-case" key={`${test.name}-${index}`}><div className="test-index">T{String(index + 1).padStart(2, '0')}</div><div className="test-copy"><strong>{test.name}</strong><p><span>操作</span>{test.steps}</p><p><span>预期</span>{test.expected}</p></div></div>)}</div></>}
+              {activeTab === 'api' && <><div className="content-eyebrow">接口草案 <span className="count-label">待开发评审</span></div>{isEditing ? <StructuredList items={result.api_endpoints || []} fields={[{ key: 'method', label: '方法' }, { key: 'path', label: '路径' }, { key: 'purpose', label: '用途', multiline: true }]} editable onChange={(index, value) => updateList('api_endpoints', index, value)} /> : <div className="api-list">{(result.api_endpoints || []).map((endpoint, index) => <div className="api-row" key={`${endpoint.path}-${index}`}><span className={`method-tag ${(endpoint.method || 'get').toLowerCase()}`}>{endpoint.method}</span><code>{endpoint.path}</code><span className="api-purpose">{endpoint.purpose}</span></div>)}</div>}<div className="api-caveat">接口字段、鉴权方式和错误码需要和实际服务端设计保持一致。</div></>}
+              {activeTab === 'tests' && <><div className="content-eyebrow">测试用例 <span className="count-label">建议覆盖边界情况</span></div>{isEditing ? <StructuredList items={result.test_cases || []} fields={[{ key: 'name', label: '用例名称' }, { key: 'steps', label: '操作步骤', multiline: true }, { key: 'expected', label: '预期结果', multiline: true }]} editable onChange={(index, value) => updateList('test_cases', index, value)} /> : <div className="test-list">{(result.test_cases || []).map((test, index) => <div className="test-case" key={`${test.name}-${index}`}><div className="test-index">T{String(index + 1).padStart(2, '0')}</div><div className="test-copy"><strong>{test.name}</strong><p><span>操作</span>{test.steps}</p><p><span>预期</span>{test.expected}</p></div></div>)}</div>}</>}
               {activeTab === 'questions' && <><div className="content-eyebrow">待确认问题 <span className="count-label">先确认这些，再进入开发</span></div><SectionList items={result.questions} numbered editable={isEditing} onChange={(index, value) => updateList('questions', index, value)} /><div className="content-eyebrow section-eyebrow">风险提示</div><SectionList items={result.risks} editable={isEditing} onChange={(index, value) => updateList('risks', index, value)} /></>}
             </div>
           </div>
@@ -361,10 +491,48 @@ function App() {
         <div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" /> 使用指南</div><h1>AI 给草案，<br /><span>你负责把关。</span></h1><p>SpecPilot 的目标不是自动替人做决定，而是帮团队更快看清未知。</p></div><div className="workflow-hero-art"><div className="hero-art-orbit" /><div className="hero-art-card"><Icon name="spark" size={18} /><strong>human in the loop</strong><span>review → test → refine</span></div></div></div>
         <div className="principle-grid"><article><span className="principle-num">01</span><h3>先确认问题</h3><p>模型会列出信息缺口。实际用户、权限和异常流程以你补充的信息为准。</p></article><article><span className="principle-num">02</span><h3>再审阅输出</h3><p>验收标准、接口草案和测试用例都可以修改，确认后才保存为人工审阅版本。</p></article><article><span className="principle-num">03</span><h3>最后运行验证</h3><p>AI 生成的内容不等于正确实现。开发者仍需跑测试、检查边界并记录问题。</p></article></div>
         <div className="workflow-doc"><div className="doc-icon"><Icon name="book" size={20} /></div><div><strong>建议的协作记录</strong><p>把实际使用的提示、AI 生成内容、人工修改和测试结果记到项目的 AI_WORKFLOW.md。只记录真实过程，不写未经验证的性能或效率数字。</p></div></div>
+        <div className="workflow-api"><div><span className="principle-num">REST API</span><h3>用自己的应用调用 SpecPilot</h3><p>支持创建需求、搜索档案、查看详情、修订和连接测试。AI 生成可在请求中附带 OpenAI 兼容 API 配置。</p></div><button className="secondary-button" onClick={() => setApiDocsOpen(true)}>查看 API 示例 <Icon name="arrow" size={14} /></button></div>
       </div>}
 
       <footer className="app-footer"><span>SpecPilot <span className="footer-sep">/</span> 把想法变成可验证的下一步</span><span>人工审阅优先 · 当前 {overview.total} 条需求</span></footer>
     </main>
+    {settingsOpen && <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSettingsOpen(false) }}>
+      <section className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+        <div className="dialog-heading"><div><span className="dialog-eyebrow">AI PROVIDER</span><h2 id="settings-title">配置自己的 API</h2></div><button className="dialog-close" onClick={() => setSettingsOpen(false)} aria-label="关闭">×</button></div>
+        <p className="dialog-description">使用 OpenAI 兼容的 Chat Completions 接口。密钥只放在当前页面内存中，并随请求发送到 SpecPilot 后端；关闭或刷新页面后需要重新输入。</p>
+        <label className="form-field"><span>Base URL</span><input autoComplete="url" spellCheck="false" value={providerSettings.base_url} onChange={(event) => setProviderSettings({ ...providerSettings, base_url: event.target.value })} placeholder="https://api.openai.com/v1" /></label>
+        <label className="form-field"><span>模型名称</span><input autoComplete="off" spellCheck="false" value={providerSettings.model} onChange={(event) => setProviderSettings({ ...providerSettings, model: event.target.value })} placeholder="输入服务商提供的模型 ID" /></label>
+        <label className="form-field"><span>API Key</span><input type="password" autoComplete="new-password" spellCheck="false" value={providerSettings.api_key} onChange={(event) => setProviderSettings({ ...providerSettings, api_key: event.target.value })} placeholder={providerSettings.api_key ? '当前页面已配置密钥' : '粘贴你的 API Key'} /></label>
+        <div className="key-note"><Icon name="check" size={15} /><span>只保存 Base URL 和模型名称；密钥不会写入浏览器存储或需求档案。</span></div>
+        {apiError && <div className="dialog-error" role="alert">{apiError}</div>}
+        <div className="dialog-actions"><button className="text-button" onClick={clearProviderKey} disabled={!providerSettings.api_key}>清除当前密钥</button><span className="action-spacer" /><button className="secondary-button" onClick={testProvider} disabled={apiTesting}>{apiTesting ? '测试中…' : '测试连接'}</button><button className="primary-small" onClick={saveProviderSettings}>保存设置</button></div>
+        <p className="dialog-footnote">为避免内网请求，服务器只接受公开 HTTPS API 地址；本机 localhost 可用于开发测试。</p>
+      </section>
+    </div>}
+    {historyOpen && <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setHistoryOpen(false) }}>
+      <section className="history-dialog" role="dialog" aria-modal="true" aria-labelledby="history-title">
+        <div className="dialog-heading"><div><span className="dialog-eyebrow">REVISION HISTORY</span><h2 id="history-title">修订历史</h2></div><button className="dialog-close" onClick={() => setHistoryOpen(false)} aria-label="关闭">×</button></div>
+        {historyLoading ? <div className="dialog-empty">正在读取历史版本…</div> : historyItems.length ? <div className="history-list">{historyItems.map((revision) => <article className="history-item" key={revision.id}><div><strong>{revision.result?.title || '未命名版本'}</strong><span>{formatDate(revision.created_at)} · {revision.note}</span><p>{revision.result?.summary || '无摘要'}</p></div><button className="secondary-button" onClick={() => loadRevision(revision)}>载入编辑</button></article>)}</div> : <div className="dialog-empty">还没有历史修订。每次保存人工审阅结果后，系统会保留修改前的版本。</div>}
+      </section>
+    </div>}
+    {apiDocsOpen && <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setApiDocsOpen(false) }}>
+      <section className="api-doc-dialog" role="dialog" aria-modal="true" aria-labelledby="api-doc-title">
+        <div className="dialog-heading"><div><span className="dialog-eyebrow">REST API</span><h2 id="api-doc-title">接口调用示例</h2></div><button className="dialog-close" onClick={() => setApiDocsOpen(false)} aria-label="关闭">×</button></div>
+        <p className="dialog-description">所有接口返回 JSON。创建需求时可选传入自己的 OpenAI 兼容服务配置，密钥仅用于当次生成，不会保存。</p>
+        <div className="api-doc-routes"><div><b>GET</b><code>/api/health/</code><span>健康状态</span></div><div><b>GET</b><code>/api/specs/?q=关键词</code><span>搜索档案</span></div><div><b>POST</b><code>/api/specs/</code><span>分析并保存需求</span></div><div><b>GET / PATCH</b><code>/api/specs/&lt;id&gt;/</code><span>读取或审阅</span></div><div><b>GET</b><code>/api/specs/&lt;id&gt;/revisions/</code><span>查看历史版本</span></div><div><b>POST</b><code>/api/providers/test/</code><span>测试自有 API</span></div></div>
+        <pre className="api-example"><code>{`curl -X POST http://localhost:8000/api/specs/ \\
+  -H 'Content-Type: application/json' \\
+  -d '{
+    "requirement": "玩家提交反馈后可以查询处理状态",
+    "provider": {
+      "base_url": "https://api.openai.com/v1",
+      "model": "你的模型 ID",
+      "api_key": "你的 API Key"
+    }
+  }'`}</code></pre>
+        <p className="dialog-footnote">正式部署前需增加用户认证、权限隔离、限流和 HTTPS。完整字段说明见项目 docs/API.md。</p>
+      </section>
+    </div>}
     {toast && <div className="toast" role="status"><Icon name="check" size={16} />{toast}</div>}
   </div>
 }

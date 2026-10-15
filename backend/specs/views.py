@@ -6,7 +6,7 @@ from rest_framework.views import APIView
 
 from .models import Spec, SpecRevision
 from .serializers import SpecRevisionSerializer, SpecSerializer
-from .services import AIProviderError, analyze_requirement
+from .services import AIProviderError, analyze_requirement, test_openai_compatible
 
 
 class HealthView(APIView):
@@ -45,7 +45,7 @@ class SpecListCreateView(APIView):
         if len(requirement) > 5000:
             return Response({"detail": "需求描述不能超过 5000 个字符。"}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            result = analyze_requirement(requirement.strip())
+            result = analyze_requirement(requirement.strip(), user_provider=request.data.get("provider"))
         except AIProviderError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
         spec = Spec.objects.create(requirement=requirement.strip(), result=result)
@@ -73,3 +73,14 @@ class SpecRevisionListView(APIView):
     def get(self, request, spec_id):
         spec = get_object_or_404(Spec, id=spec_id)
         return Response(SpecRevisionSerializer(spec.revisions.all(), many=True).data)
+
+
+class ProviderTestView(APIView):
+    """Check one caller-owned OpenAI-compatible API config without saving its secret."""
+
+    def post(self, request):
+        try:
+            result = test_openai_compatible(request.data.get("provider"))
+        except AIProviderError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(result)

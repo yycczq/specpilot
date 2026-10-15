@@ -12,9 +12,11 @@ SpecPilot 是一个 AI 辅助需求工作台原型。输入一段自然语言想
 
 - 自然语言需求输入、可修改的场景模板和无密钥演示样例。
 - AI 生成需求概览、澄清问题、用户故事、验收标准、接口草案、测试用例与风险提示。
-- 支持无密钥本地演示模式；配置 Anthropic API 后可启用真实模型调用。
-- 人工编辑草案、标记已确认，并保留修改前快照。
+- 支持无密钥本地演示、服务端 Anthropic 配置，以及用户自带 OpenAI 兼容 API（自定义 Base URL、模型和 API Key）。
+- API Key 只随当前请求发送，不保存到数据库、缓存或浏览器存储；自带 API 的生成结果不进入共享缓存。
+- 人工编辑全部草案字段、标记已确认、载入历史版本，并保留修改前快照。
 - 搜索需求档案，复制或导出 Markdown。
+- 提供 API 连接测试、REST 接口调用示例和健康状态提示。
 - React 单页工作台、Django REST API、MySQL 持久化和 Redis 缓存。
 - Docker Compose 本地启动，GitHub Actions 运行后端测试和前端构建。
 
@@ -26,7 +28,7 @@ SpecPilot 是一个 AI 辅助需求工作台原型。输入一段自然语言想
 | API | Python 3.12、Django 5、Django REST Framework |
 | 数据库 | MySQL 8.4；测试和轻量开发可用 SQLite |
 | 缓存 | Redis |
-| AI | Anthropic Messages API；mock 模式用于无密钥演示和自动化测试 |
+| AI | OpenAI 兼容 Chat Completions（用户自带 API）、Anthropic Messages API、mock 演示模式 |
 | 验证 | Django TestCase、GitHub Actions |
 
 ## 本地运行
@@ -40,7 +42,7 @@ docker compose up --build
 
 打开 `http://localhost:5173`。默认使用 mock 模式，不需要 API Key。后端健康检查地址为 `http://localhost:8000/api/health/`。
 
-启用 Anthropic 模式时，在 `.env` 中设置 `AI_PROVIDER=anthropic` 和你自己的 `ANTHROPIC_API_KEY`，再重启服务。密钥只保存在本地 `.env`，不要提交到 GitHub。
+启用服务端 Anthropic 模式时，在 `.env` 中设置 `AI_PROVIDER=anthropic` 和 `ANTHROPIC_API_KEY`，再重启服务。也可以在工作台右上角选择“配置 API”，填写自己的 OpenAI 兼容 Base URL、模型和 Key；界面不会将 Key 写入浏览器存储，后端也不会持久化它。
 
 ## 测试
 
@@ -66,6 +68,9 @@ pnpm build
 | `GET` | `/api/specs/{id}/` | 查看需求详情 |
 | `PATCH` | `/api/specs/{id}/` | 保存人工审阅结果和修改前快照 |
 | `GET` | `/api/specs/{id}/revisions/` | 查看修改历史 |
+| `POST` | `/api/providers/test/` | 测试用户自带的 OpenAI 兼容 API |
+
+调用字段、curl 示例、BYOK 限制和部署边界见 [REST API 文档](docs/API.md)。
 
 ## UI 参考与 AI 开发记录
 
@@ -76,5 +81,6 @@ pnpm build
 
 - 这是用于作品集展示的原型，当前 API 没有用户认证，不应直接部署为生产服务。
 - mock 模式提供结构化演示草案，不调用真实模型，也不代表生成质量评估。
-- Anthropic 模式需用户提供有效 API Key；模型输出需要开发者复核。
+- Anthropic 模式需在服务端配置 API Key；BYOK 支持 OpenAI 兼容 Chat Completions。模型输出需要开发者复核。
 - 当前版本不生成或执行任意代码，只提供可审阅的规格与测试草案。
+- BYOK Base URL 限定为公开 HTTPS 地址（localhost 开发环境可用 HTTP），降低 SSRF 风险。
